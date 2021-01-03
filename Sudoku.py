@@ -1,9 +1,9 @@
 import numpy as np
 import cv2 as cv
 import pickle
+import matplotlib.pyplot as plt
 
-import math
-
+from skimage.morphology import skeletonize
 
 
 def biggestContour(contours):
@@ -29,9 +29,9 @@ def reorder(myPoints):
     myPointsNew[2] = myPoints[np.argmax(diff)]
     return myPointsNew
 def Clean(img):
-
-    img =cv.GaussianBlur(img,(5,5),1)
-    edited=cv.adaptiveThreshold(img, 255, 1, 1, 11, 8)
+    flag=False
+    # img =cv.GaussianBlur(img,(5,5),1)
+    edited=cv.adaptiveThreshold(img, 255, 1, 1, 11, 14)
     countores,_=cv.findContours(edited,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE )
     #Board =np.array([])
     #MaxArea=0
@@ -45,28 +45,31 @@ def Clean(img):
     #                 Board = approx
     #                 MaxArea=area
     Board,_=biggestContour(countores)
-    Order_Board=np.zeros((4,1,2),dtype=np.int32)
-    pt=Board.reshape((4,2))
-    Max=pt.sum(1)
-    Order_Board[0]=pt[np.argmin(Max)]
-    Order_Board[3]=pt[np.argmax(Max)]
-    Min=np.diff(pt,axis=1)
-    Order_Board[1]=pt[np.argmin(Min)]
-    Order_Board[2]=pt[np.argmax(Min)]
-    print(Order_Board)
-    pts=np.float32(Order_Board)
-    pts1=np.float32([[0,0],[300,0],[0,300],[300,300]])
-    Mat=cv.getPerspectiveTransform(pts,pts1)
-    edited=cv.warpPerspective(edited,Mat,(300,300))
-    cv.imshow("wr",edited)
+    if Board.size !=0 :
+        Order_Board=np.zeros((4,1,2),dtype=np.int32)
+        pt=Board.reshape((4,2))
+        Max=pt.sum(1)
+        Order_Board[0]=pt[np.argmin(Max)]
+        Order_Board[3]=pt[np.argmax(Max)]
+        Min=np.diff(pt,axis=1)
+        Order_Board[1]=pt[np.argmin(Min)]
+        Order_Board[2]=pt[np.argmax(Min)]
+        print(Order_Board)
+        pts=np.float32(Order_Board)
+        pts1=np.float32([[0,0],[300,0],[0,300],[300,300]])
+        Mat=cv.getPerspectiveTransform(pts,pts1)
+        edited=cv.warpPerspective(edited,Mat,(300,300))
+        cv.imshow("wr",edited)
+        return True ,edited
 
-    edited=cv.morphologyEx(edited,cv.MORPH_OPEN,(9,9),iterations=1)
-    edited=cv.erode(edited,(5,5),iterations=1)
+    # edited=cv.morphologyEx(edited,cv.MORPH_OPEN,(9,9),iterations=1)
+    # edited=cv.dilate(edited,(7,7),iterations=1)
     #tr=np.ones_like(edited)
     #edited=cv.bitwise_not(edited,tr)
-    return edited
+    return False , edited
 def img2digitsimg(img):
     imges=[]
+    cnt=0
     for i in range(6,297,33):
         for j in range(2,297,33):
             pts=[[j,i],[j+33,i],[j,i+33],[j+33,i+33]]
@@ -74,11 +77,40 @@ def img2digitsimg(img):
             pts =np.float32(pts)
             pts1=np.float32(pts1)
             m=cv.getPerspectiveTransform(pts,pts1)
-            imges.append(cv.warpPerspective(img,m,(100,100)))
+            box=cv.warpPerspective(img,m,(100,100))
+            imges.append(box)
+            cnt+=1
+            # if not CheckEmptyBox(box,1):
+            #     cv.imwrite(r"G:\ITE-FIFTH\Computer Vision\Dataset\SIFT\\a"+str(cnt)+".jpg",box)
     return imges
+def skel(img):
+    size = np.size(img)
+    skel = np.zeros(img.shape, np.uint8)
+
+    # Get a Cross Shaped Kernel
+    element = cv.getStructuringElement(cv.MORPH_CROSS, (3, 3))
+
+    # Repeat steps 2-4
+    while True:
+        # Step 2: Open the image
+        open = cv.morphologyEx(img, cv.MORPH_OPEN, element)
+        close = cv.morphologyEx(img, cv.MORPH_CLOSE, element)
+
+        # Step 3: Substract open from the original image
+        open=cv.subtract(open, close)
+
+        temp = cv.subtract(img, open)
+        # Step 4: Erode the original image and refine the skeleton
+        eroded = cv.erode(img, element)
+        skel = cv.bitwise_or(skel, temp)
+        img = eroded.copy()
+        # Step 5: If there are no white pixels left ie.. the image has been completely eroded, quit the loop
+        if cv.countNonZero(img) == 0:
+            break
+    return skel
 def CheckEmptyBox(img,index):
-    for i in range(40):
-        for j in range(40):
+    for i in range(30):
+        for j in range(30):
             if img[34+i][34+j]==255:
                 return False
     return True
@@ -101,52 +133,95 @@ def CheckEmptyBox(img,index):
     #     return False
 def most_frequent(List):
     return max(set(List), key = List.count)
-def predictNumbers(imgs):
-    orb = cv.SIFT_create()
-    bf = cv.BFMatcher()
-    kp = [0, 0, 0, 0, 0, 0, 0, 0, 0]
-    des = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+def TemplateMatching(imgs):
+    res=np.zeros(81)
     for i in range(1, 10):
-        tmp = cv.imread("G:\\ITE-FIFTH\\Computer Vision\\Dataset\\SIFT\\" + str(i) + ".jpg", 0)
-        tmp=cv.resize(tmp,(100,100),interpolation=cv.INTER_CUBIC)
-        kp[i - 1], des[i - 1] = orb.detectAndCompute(tmp, None)
-        res=np.zeros(81)
+        tmp = cv.imread("G:\\ITE-FIFTH\\Computer Vision\\Dataset\\SIFT1\\" + str(i) + ".jpg", 0)
+        for index,img in enumerate(imgs):
+            if not CheckEmptyBox(img,index):
+                    match=cv.matchTemplate(img,tmp,cv.TM_SQDIFF_NORMED)
+                    threshold = 0.8
+                    flag = False
+                    if np.amax(match) > threshold:
+                        flag = True
+                    if flag:
+                        res[index]=i
+            else:
+                res[index]=0
+    return res.reshape(9,9)
+
+def predictNumbersSift(imgs):
+    orb = cv.FastFeatureDetector_create()
+    orb1 = cv.SIFT_create()
+
+    kp = np.ndarray(9).tolist()
+    des = np.ndarray(9).tolist()
+    for i in range(1, 10):
+        tmp = cv.imread("G:\\ITE-FIFTH\\Computer Vision\\Dataset\\SIFT2\\" + str(i) + ".jpg", 0)
+        tmp=skel(tmp)
+        # plt.imshow(c)
+        # cv.imshow(str(i),c)
+        #tmp=cv.resize(tmp,(100,100),interpolation=cv.INTER_AREA)
+        # tmp=cv.erode(tmp,(7,7),iterations=2)
+        kp[i-1] = orb.detect(tmp, None)
+        des[i-1]=orb1.compute(tmp,kp[i-1])[1]
+    res=np.zeros(81)
     for index,img in enumerate(imgs):
-        if not CheckEmptyBox(img,index):
-            # img=cv.dilate(img,(3,3),iterations=1)
-            cv.imshow(str(index),img)
-            kp1,des1=orb.detectAndCompute(img,None)
+         img=skel(img)
+         # cv.imshow(str(index),t)
+         if not CheckEmptyBox(img,index):
+            kp1=orb.detect(img,None)
+            des1=orb1.compute(img,kp1)[1]
             pres=[]
             for i,n in enumerate(des):
-                matches=bf.knnMatch(des1,n,k=2)
+                index_params = dict(algorithm = 0,trees=5)
+                search_params = dict(checks=100)
+                flann = cv.FlannBasedMatcher(index_params, search_params)
+                matches = flann.knnMatch(des1,n, k=2)
+                # Need to draw only good matches, so create a mask
+                matchesMask = [0 for i in range(len(matches))]
+
+                # ratio test as per Lowe's paper
+                for g,  (m, n) in enumerate(matches):
+                    if m.distance < 0.75 * n.distance:
+                        matchesMask[g] = 1
+
                 for a,b in matches:
-                    if a.distance <0.75*b.distance:
-                        pres.append(i+1)
-            print(index ,"  res ", most_frequent(pres))
+                    if a.distance <0.7*b.distance :
+                        pres.append((i+1))
+
+            print(pres, ' Hello',most_frequent(pres))
+
             res[index]=most_frequent(pres)
-        else:
-            res[index]=0
+         else:
+             res[index]=0
     res=np.array(res).reshape(9,9)
     return res
-     # for index,img in enumerate(imgs):
-     #    if not CheckEmptyBox(img,index):
-     #        kp1,des1=orb.det
-    # fil = open(r'G:\ITE-FIFTH\Computer Vision\knnpickle_file1.model', 'rb')
-    # models = pickle.load(fil)
-    # res=np.zeros_like(imgs)
-    # print(res.shape)
-    #  for index,img in enumerate(imgs):
-    #     if not CheckEmptyBox(img,index):
-    #         ac = cv.resize(img, (128, 128), interpolation=cv.INTER_LANCZOS4)
-    #         tt = np.ones_like(ac)
-    #         ac = cv.bitwise_not(ac, tt)
-    #         cv.imshow(str(index),ac)
-    #         #ac=cv.erode(ac,(13,13),iterations=6)
-    #         tmp=models.predict([ac.flatten()])
-    #         print(index, "   ",tmp[0] )
-    #         res[index]=tmp[0]
+def getmax(a):
+    max=0
+    tmp=object()
+    for i in a:
+        if i.response > max:
+            max=i.response
+            tmp=i
+    return tmp
+def predictNumbersKnnModel(imgs):
+    fil = open(r'G:\ITE-FIFTH\Computer Vision\knnpickle_file1.model', 'rb')
+    models = pickle.load(fil)
+    res=np.zeros(81)
+    for index,img in enumerate(imgs):
+        if not CheckEmptyBox(img,index):
+            ac = cv.resize(img, (128, 128), interpolation=cv.INTER_LANCZOS4)
+            tt = np.ones_like(ac)
+            ac = cv.bitwise_not(ac, tt)
+            #cv.imshow(str(index),ac)
+            #ac=cv.erode(ac,(13,13),iterations=6)
+            tmp=models.predict([ac.flatten()])
+            res[index]=tmp
+            print(tmp)
 
-    # return res
+
+    return res.resize(9,9)
 
 
 def imgCuts(img):
@@ -176,44 +251,59 @@ def onMouse(event,x,y,a,b):
     if event==cv.EVENT_LBUTTONDOWN:
         print("x=",x," y=",y)
 
-Original_Sudoku = cv.imread(r"G:\ITE-FIFTH\Computer Vision\Pictures\Sudoku1.jpg",0)
-Empty_Grid=cv.imread(r"G:\ITE-FIFTH\Computer Vision\Pictures\grid1.jpg",0)
-Empty_Grid=cv.resize(Empty_Grid,(300,300),interpolation=cv.INTER_LANCZOS4)
-_,Empty_Grid=cv.threshold(Empty_Grid,200,255,cv.THRESH_BINARY)
-Empty_Grid=cv.erode(Empty_Grid,(9,9),iterations=2)
-Empty_Grid=cv.morphologyEx(Empty_Grid,cv.MORPH_CLOSE,(5,5))
-cv.imshow("r",Empty_Grid)
-mask=np.zeros_like(Empty_Grid)
-Empty_Grid=cv.bitwise_not(Empty_Grid,mask)
-cv.imshow("test",Original_Sudoku)
-cv.setMouseCallback("test",onMouse)
-ims=Clean(Original_Sudoku)
-ims=cv.morphologyEx(ims,cv.MORPH_CLOSE,(7,7),iterations=2)
+def video():
+    PicPath = "G:\\ITE-FIFTH\\Computer Vision\\Video\\"
+    vid = cv.VideoCapture(0)
+    cnt = 0
+    while (True):
+        ret, frame = vid.read()
+        c = vid.get(cv.CAP_PROP_FPS)
+        tt = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+        flag, z = Clean(tt)
+        z = np.float32(z)
+        if cnt<0:
+            cnt=0
+        if flag and not np.all(z == 0) and not np.all(z == 255) and not np.count_nonzero(z == 255) > 10000:
+            cnt += 1
+            cv.imwrite(PicPath + str(cnt) + ".jpg", z)
+        else:
+            cnt-=1
+        if cnt ==8:
+            break
+            #c = img2digitsimg(z)
+            #a = predictNumbersSift(c)
+        #     tmp=cv.imread(PicPath+"15.jpg",0)
 
-cv.imshow("edited",ims)
-c=cv.bitwise_or(ims,Empty_Grid)
-cv.imshow("c",c)
-#z=imgCuts(c)
-z=img2digitsimg(Clean(Original_Sudoku))
-grid=predictNumbers(z)
-print(grid)
-cnt=0
-# for i in range(81):
-#     if not CheckEmptyBox(z[i],i):
-#         cv.imshow(str(i),z[i])
-#         cnt=cnt+1
-print(cnt)
-#cv.imshow("z",z[79][0])
-tt=z[3]
-tt=cv.dilate(tt,(5,5),iterations=5)
-cv.imshow("q",tt)
-cv.imshow("av",z[3])
+            # print(a)
+        #     break
+        cv.imshow('frame', frame)
 
-cv.setMouseCallback("q",onMouse)
-#print(grid)
-# if(CheckEmptyBox(z[1],1)):
-#     print("Yess")
-#a=z[79]-z[0]
-#cv.imwrite(r"G:\ITE-FIFTH\Computer Vision\Projects\Computer_Vision_Sudokou\9.jpg",z[3])
+        if cv.waitKey(1) & 0xFF == ord('q'):
+            break
+    z=cv.imread(PicPath+"5.jpg",0)
+    # z=cv.dilate(z,(5,5),iterations=1)
+    z=cv.dilate(z, (4, 4), iterations=2)
+    z=img2digitsimg(z)
+    # grid=TemplateMatching(z)
+    # grid=predictNumbersSift(z)
+    grid=predictNumbersSift(z)
+    print(grid)
 
+    vid.release()
+    # # Destroy all the windows
+    cv.destroyAllWindows()
+
+
+video()
+# debug=cv.imread(r"G:\ITE-FIFTH\Computer Vision\Video\13.jpg",0)
+#
+# cv.imshow("debug",debug)
+# # debug=cv.erode(debug,(5,5))
+# debug=cv.dilate(debug,(4,4),iterations=2)
+# # debug=cv.morphologyEx(debug,cv.MORPH_CLOSE,(5,5),iterations=1)
+#
+#
+# cv.imshow("debug edited",debug)
+# debug=img2digitsimg(debug)
+# print(predictNumbersSift(debug))
 cv.waitKey(0)
